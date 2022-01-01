@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Livewire\Component;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 class MostAnticipated extends Component
 {
@@ -13,20 +14,22 @@ class MostAnticipated extends Component
 
     public function loadMostAnticipated()
     {
+        $token_file=Storage::disk('local')->get('igdb_access_token.txt');
+
         $current = Carbon::now()->timestamp;
         $afterFourMonths = Carbon::now()->addMonths(4)->timestamp;
 
-        $mostAnticipatedUnformatted = Http::withHeaders(config('services.igdb'))
-            ->withOptions([
-                'body' => "
-                    fields name, cover.url, first_release_date, popularity, platforms.abbreviation, rating, rating_count, summary, slug;
-                    where platforms = (48,49,130,6)
-                    & (first_release_date >= {$current}
-                    & first_release_date < {$afterFourMonths});
-                    sort popularity desc;
-                    limit 4;
-                "
-            ])->get('https://api-v3.igdb.com/games')
+        $mostAnticipatedUnformatted = Http::withHeaders([
+                'Client-ID' => config('services.igdb.key'),
+                'Authorization' => 'Bearer '. $token_file,
+            ])
+            ->withBody("fields name, cover.url, first_release_date, total_rating_count, platforms.abbreviation, rating, rating_count, summary, slug;
+                where platforms = (130)
+                & (first_release_date >= {$current}
+                & first_release_date < {$afterFourMonths});
+                sort total_rating_count desc;
+                limit 4;","text/plain")
+            ->post(config('services.igdb.url').'/games')
             ->json();
 
         $this->mostAnticipated = $this->formatForView($mostAnticipatedUnformatted);
@@ -41,7 +44,7 @@ class MostAnticipated extends Component
     {
         return collect($games)->map(function ($game) {
             return collect($game)->merge([
-                'coverImageUrl' => Str::replaceFirst('thumb','cover_small', $game['cover']['url']),
+                'coverImageUrl' => array_key_exists('cover', $game) ? Str::replaceFirst('thumb','cover_small', $game['cover']['url']) : null,
                 'releaseDate' => Carbon::parse($game['first_release_date'])->format('M d, Y'),
             ]);
         })->toArray();

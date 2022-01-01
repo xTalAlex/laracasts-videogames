@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 class GamesController extends Controller
 {
@@ -21,7 +22,7 @@ class GamesController extends Controller
 
         // $response = $client->request('POST', 'multiquery', [
         //     'headers' => [
-        //         'user-key' => env('IGDB_KEY'),
+        //         'key' => env('IGDB_KEY'),
         //     ],
         //     'body' => '
         //         query games "Playstation" {
@@ -75,14 +76,18 @@ class GamesController extends Controller
      */
     public function show($slug)
     {
-        $game = Http::withHeaders(config('services.igdb'))
-            ->withOptions([
-                'body' => "
-                    fields name, cover.url, first_release_date, popularity, platforms.abbreviation, rating,
+        $token_file=Storage::disk('local')->get('igdb_access_token.txt');
+
+        $game = Http::withHeaders([
+            'Client-ID' => config('services.igdb.key'),
+            'Authorization' => 'Bearer '. $token_file,
+        ])
+            ->withBody("
+                    fields name, cover.url, first_release_date, total_rating, total_rating_count, platforms.abbreviation, rating,
                     slug, involved_companies.company.name, genres.name, aggregated_rating, summary, websites.*, videos.*, screenshots.*, similar_games.cover.url, similar_games.name, similar_games.rating,similar_games.platforms.abbreviation, similar_games.slug;
                     where slug=\"{$slug}\";
-                "
-            ])->get('https://api-v3.igdb.com/games')
+                ","text/plain"
+            )->post(config('services.igdb.url').'/games')
             ->json();
 
         abort_if(!$game, 404);
@@ -95,31 +100,36 @@ class GamesController extends Controller
     private function formatGameForView($game)
     {
         return collect($game)->merge([
-            'coverImageUrl' => Str::replaceFirst('thumb', 'cover_big', $game['cover']['url']),
-            'genres' => collect($game['genres'])->pluck('name')->implode(', '),
-            'involvedCompanies' => $game['involved_companies'][0]['company']['name'],
-            'platforms' => collect($game['platforms'])->pluck('abbreviation')->implode(', '),
+            'coverImageUrl' =>  array_key_exists('cover', $game) ? Str::replaceFirst('thumb', 'cover_big', $game['cover']['url']) : null,
+            'genres' => array_key_exists('genres', $game) ? collect($game['genres'])->pluck('name')->implode(', ') : null,
+            'involvedCompanies' => array_key_exists('involved_companies', $game) ? $game['involved_companies'][0]['company']['name'] : null,
+            'platforms' => array_key_exists('platforms', $game) ? collect($game['platforms'])->pluck('abbreviation')->implode(', ') : null,
             'memberRating' => array_key_exists('rating', $game) ? round($game['rating']) : '0',
             'criticRating' => array_key_exists('aggregated_rating', $game) ? round($game['aggregated_rating']) : '0',
-            'trailer' => 'https://youtube.com/embed/'.$game['videos'][0]['video_id'],
-            'screenshots' => collect($game['screenshots'])->map(function ($screenshot) {
+            'trailer' => array_key_exists('video', $game) ? 'https://youtube.com/embed/'.$game['videos'][0]['video_id'] : null,
+            'screenshots' => array_key_exists('screenshots', $game) ? collect($game['screenshots'])->map(function ($screenshot) {
                 return [
                     'big' => Str::replaceFirst('thumb', 'screenshot_big', $screenshot['url']),
                     'huge' => Str::replaceFirst('thumb', 'screenshot_huge', $screenshot['url']),
                 ];
-            })->take(9),
-            'similarGames' => collect($game['similar_games'])->map(function ($game) {
-                return collect($game)->merge([
-                    'coverImageUrl' => array_key_exists('cover', $game)
-                        ? Str::replaceFirst('thumb', 'cover_big', $game['cover']['url'])
-                        : 'https://via.placeholder.com/264x352',
-                    'rating' => isset($game['rating']) ? round($game['rating']) : null,
-                    'platforms' => array_key_exists('platforms', $game)
-                        ? collect($game['platforms'])->pluck('abbreviation')->implode(', ')
-                        : null,
-                ]);
-            })->take(6),
-            'social' => [
+            })->take(9) : null,
+            'similarGames' => array_key_exists('similar_games', $game) ? collect($game['similar_games'])
+                ->filter( fn ($game) => 
+                    array_key_exists('platforms',$game) && collect($game['platforms'])->pluck('id')->contains(130)
+                )
+                ->map(function ($game) {
+                    return collect($game)
+                        ->merge([
+                            'coverImageUrl' => array_key_exists('cover', $game)
+                                ? Str::replaceFirst('thumb', 'cover_big', $game['cover']['url'])
+                                : 'https://via.placeholder.com/264x352',
+                            'rating' => isset($game['rating']) ? round($game['rating']) : null,
+                            'platforms' => array_key_exists('platforms', $game)
+                                ? collect($game['platforms'])->pluck('abbreviation')->implode(', ')
+                                : null,
+                        ]);
+            })->take(6) : null,
+            'social' => array_key_exists('platforms', $game) ? [
                 'website' => collect($game['websites'])->first(),
                 'facebook' => collect($game['websites'])->filter(function ($website) {
                     return Str::contains($website['url'], 'facebook');
@@ -130,7 +140,7 @@ class GamesController extends Controller
                 'instagram' => collect($game['websites'])->filter(function ($website) {
                     return Str::contains($website['url'], 'instagram');
                 })->first(),
-            ]
+            ] : null,
         ]);
     }
 

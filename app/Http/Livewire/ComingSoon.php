@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Livewire\Component;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 class ComingSoon extends Component
 {
@@ -13,22 +14,24 @@ class ComingSoon extends Component
 
     public function loadComingSoon()
     {
-        $current = Carbon::now()->timestamp;
+        $token_file=Storage::disk('local')->get('igdb_access_token.txt');
+        if ($token_file) {
+            $current = Carbon::now()->timestamp;
 
-        $comingSoonUnformatted = Http::withHeaders(config('services.igdb'))
-            ->withOptions([
-                'body' => "
-                    fields name, cover.url, first_release_date, popularity, platforms.abbreviation, rating, rating_count, summary, slug;
-                    where platforms = (48,49,130,6)
-                    & (first_release_date >= {$current}
-                    & popularity > 5);
+            $comingSoonUnformatted = Http::withHeaders([
+                    'Client-ID' => config('services.igdb.key'),
+                    'Authorization' => 'Bearer '. $token_file,
+                ])
+                ->withBody("fields name, cover.url, total_rating_count, first_release_date, platforms.abbreviation, rating, rating_count, summary, slug;
+                    where platforms = (130)
+                    & (first_release_date >= {$current});
                     sort first_release_date asc;
-                    limit 4;
-                "
-            ])->get('https://api-v3.igdb.com/games')
-            ->json();
+                    limit 4;", "text/plain")
+                ->post(config('services.igdb.url').'/games')
+                ->json();
 
-        $this->comingSoon = $this->formatForView($comingSoonUnformatted);
+            $this->comingSoon = $this->formatForView($comingSoonUnformatted);
+        }
     }
 
     public function render()
@@ -38,9 +41,10 @@ class ComingSoon extends Component
 
     private function formatForView($games)
     {
+
         return collect($games)->map(function ($game) {
             return collect($game)->merge([
-                'coverImageUrl' => Str::replaceFirst('thumb','cover_small', $game['cover']['url']),
+                'coverImageUrl' => array_key_exists('cover', $game) ? Str::replaceFirst('thumb','cover_small', $game['cover']['url']) : null,
                 'releaseDate' => Carbon::parse($game['first_release_date'])->format('M d, Y'),
             ]);
         })->toArray();

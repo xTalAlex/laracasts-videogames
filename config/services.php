@@ -31,7 +31,9 @@ return [
     ],
 
     'igdb' => [
-        'user-key' => env('IGDB_KEY'),
+        'key' => env('IGDB_KEY'),
+        'secret' => env('IGDB_SECRET'),
+        'url' => env('IGDB_URL'),
     ]
 
 ];

@@ -1,4 +1,5 @@
 <script>
+
   @if ($event) window.livewire.on('{{ $event }}', params => { @endif
 
   @if ($event)

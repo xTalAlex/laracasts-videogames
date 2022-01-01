@@ -7,6 +7,7 @@ use Livewire\Component;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 
 class PopularGames extends Component
 {
@@ -14,26 +15,29 @@ class PopularGames extends Component
 
     public function loadPopularGames()
     {
+        $token_file=Storage::disk('local')->get('igdb_access_token.txt');
+
         $before = Carbon::now()->subMonths(2)->timestamp;
         $after = Carbon::now()->addMonths(2)->timestamp;
 
-        $popularGamesUnformatted = Cache::remember('popular-games', 7, function () use ($before, $after) {
+        $popularGamesUnformatted = Cache::remember('popular-games', 7, function () use ($before, $after, $token_file) {
             // sleep(3);
-            return Http::withHeaders(config('services.igdb'))
-                ->withOptions([
-                    'body' => "
-                        fields name, cover.url, first_release_date, popularity, platforms.abbreviation, rating, slug;
-                        where platforms = (48,49,130,6)
-                        & (first_release_date >= {$before}
-                        & first_release_date < {$after});
-                        sort popularity desc;
-                        limit 12;
-                    "
-                ])->get('https://api-v3.igdb.com/games')
+            return Http::withHeaders([
+                'Client-ID' => config('services.igdb.key'),
+                'Authorization' => 'Bearer '. $token_file,
+            ])
+                ->withBody("
+                    fields name, cover.url, first_release_date, total_rating_count, platforms.abbreviation, rating, slug;
+                    where platforms = (130)
+                    & (first_release_date >= {$before}
+                    & first_release_date < {$after});
+                    sort total_rating_count desc;
+                    limit 12;
+                ","text/plain")
+                ->post(config('services.igdb.url').'/games')
                 ->json();
         });
 
-        // dd($this->formatForView($popularGamesUnformatted));
         $this->popularGames = $this->formatForView($popularGamesUnformatted);
 
         collect($this->popularGames)->filter(function ($game) {
@@ -55,7 +59,7 @@ class PopularGames extends Component
     {
         return collect($games)->map(function ($game) {
             return collect($game)->merge([
-                'coverImageUrl' => Str::replaceFirst('thumb', 'cover_big', $game['cover']['url']),
+                'coverImageUrl' =>  array_key_exists('cover', $game) ? Str::replaceFirst('thumb', 'cover_big', $game['cover']['url']) : null,
                 'rating' => isset($game['rating']) ? round($game['rating']) : null,
                 'platforms' => collect($game['platforms'])->pluck('abbreviation')->implode(', '),
             ]);
